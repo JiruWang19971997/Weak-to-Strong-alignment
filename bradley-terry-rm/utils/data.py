@@ -1,0 +1,43 @@
+from typing import List, Dict, Any, Union, Optional
+from transformers import AutoTokenizer
+from transformers.utils import PaddingStrategy
+from dataclasses import dataclass, field
+
+@dataclass
+@dataclass
+class RewardDataCollatorWithPadding:
+    tokenizer: AutoTokenizer
+    padding: Union[bool, str, PaddingStrategy] = True
+    max_length: Optional[int] = None
+    pad_to_multiple_of: Optional[int] = None
+    return_tensors: str = "pt"
+
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
+        merged_features = []
+
+        for feature in features:
+            merged_features.append(
+                {
+                    "input_ids": feature["input_ids_j"],
+                    "attention_mask": feature["attention_mask_j"],
+                }
+            )
+            merged_features.append(
+                {
+                    "input_ids": feature["input_ids_k"],
+                    "attention_mask": feature["attention_mask_k"],
+                }
+            )
+        batch = self.tokenizer.pad(
+            merged_features,
+            padding=self.padding,
+            max_length=self.max_length,
+            pad_to_multiple_of=self.pad_to_multiple_of,
+            return_tensors=self.return_tensors,
+        )
+        batch = {
+            "input_ids": batch["input_ids"],
+            "attention_mask": batch["attention_mask"],
+            "return_loss": True,
+        }
+        return batch
