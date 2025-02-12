@@ -68,12 +68,6 @@ Llama3.2B
 - [ ] gemma
 
 
-
-So I propose the feature alignment method as follows:
-- hidden_layer_nums/expert_layer_nums = k, k-th layer of the expert is used as weak-superviser to update k-th  (k * expert_layer_nums)-th 
-
-
-
 ## Training Data
 ### Dataset Description
 The traditional preference dataset format like [sardinelab/MT-pref](https://huggingface.co/datasets/sardinelab/MT-pref) or [trl-lib/Capybara-Preferences](https://huggingface.co/datasets/trl-lib/Capybara-Preferences) is:
