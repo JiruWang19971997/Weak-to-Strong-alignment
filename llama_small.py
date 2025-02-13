@@ -51,7 +51,7 @@ class ScriptArguments:
         },
     )
     model_path: Optional[str] = field(
-        default="/root/Llama-3.2-1B-Instruct",
+        default="/root/autodl-tmp/Llama-3.2-1B-Instruct",
         metadata={"help": "prepossed model weight"},
     )
 
@@ -59,8 +59,8 @@ class ScriptArguments:
     per_device_eval_batch_size: Optional[int] = field(default=1)
     # for 8 GPU, the global batch size is 512
     gradient_accumulation_steps: Optional[int] = field(default=64)
-    learning_rate: Optional[float] = field(default=2e-6)
-    weight_decay: Optional[float] = field(default=0.001)
+    learning_rate: Optional[float] = field(default=2e-5)
+    weight_decay: Optional[float] = field(default=0.01)
     bf16: Optional[bool] = field(
         default=True,
         metadata={
@@ -68,19 +68,15 @@ class ScriptArguments:
         },
     )
     num_train_epochs: Optional[int] = field(
-        default=5,
+        default=1,
         metadata={"help": "The number of training epochs for the reward model."},
     )
     train_data_path: Optional[str] = field(
         default="/root/dataset",
         metadata={"help": "The dir of the whole dataset prepossed"},
     )
-    eval_data_path: Optional[str] = field(
-        default="/root/eval",
-        metadata={"help": "The dir of the whole dataset prepossed"},
-    )
     output_path: Optional[str] = field(
-        default="/root/autodl-tmp/llama3.2-small",
+        default="/root/autodl-tmp",
         metadata={"help": "The dir for output model"},
     )
     gradient_checkpointing: Optional[bool] = field(
@@ -150,14 +146,13 @@ model = llama_model
 total_params = sum(p.numel() for p in model.parameters()) / 1e9
 print(f"Model size: {total_params:.2f}B parameters")
 
-# 确保 output_path_ 是一个字符串，并正确拼接
-output_name = f"{script_args.output_path}_{total_params:.2f}B"
+output_name = f"{script_args.output_path}{total_params:.2f}B"
 print(f"Save path: {output_name}")
 
 
 # Get the dataset
 dataset = load_from_disk(script_args.train_data_path)
-split_dataset = dataset.train_test_split(test_size=200)
+split_dataset = dataset.train_test_split(test_size=1000)
 
 train_dataset = split_dataset["train"]
 eval_dataset = split_dataset["test"]
@@ -275,8 +270,7 @@ class EvaluationCallback(TrainerCallback):
         self.save_dir = save_dir
 
     def on_step_end(self, args, state, control, **kwargs):
-        if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
-            return
+
         if state.global_step % self.eval_steps == 0 and state.global_step > 0:
             metrics = self.trainer.evaluate()
             accuracy = metrics.get("eval_accuracy", 0.0)
@@ -285,8 +279,8 @@ class EvaluationCallback(TrainerCallback):
             # 如果当前 accuracy 是最高的，则保存模型
             if accuracy > self.best_accuracy:
                 self.best_accuracy = accuracy
-                print(f"✅ New best accuracy! Saving model to {self.save_dir}")
-                self.trainer.save_model(self.save_dir)
+                print(f"✅ New best accuracy! Saving model to {output_name}")
+                self.trainer.save_model(output_name)
 
 
 # Train the model, woohoo.
