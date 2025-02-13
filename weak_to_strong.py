@@ -54,7 +54,7 @@ class ScriptArguments:
         metadata={"help": "prepossed model weight"},
     )
     teacher_model_path: Optional[str] = field(
-        default="/root/weak_superviser_0.32B/last_checkpoint",
+        default="/root/0.51B",
         metadata={"help": "prepossed model weight"},
     )
 
@@ -78,12 +78,8 @@ class ScriptArguments:
         default="/root/train_small",
         metadata={"help": "The dir of the whole dataset prepossed"},
     )
-    eval_data_path: Optional[str] = field(
-        default="/root/eval",
-        metadata={"help": "The dir of the whole dataset prepossed"},
-    )
     output_path: Optional[str] = field(
-        default="/root/autodl-tmp/weak_to_strong_3_7_11",
+        default="/root/autodl-tmp/weak_to_strong_",
         metadata={"help": "The dir for output model"},
     )
     gradient_checkpointing: Optional[bool] = field(
@@ -108,10 +104,7 @@ class ScriptArguments:
     )
     eval_every_steps: Optional[int] = field(
         default=999999,
-        metadata={"help": "Eval the model every x steps"},)
-    student_layers: Optional[List[int]] = field(
-        default_factory=lambda: [0],
-        metadata={"help": "scale of small models of llama"},
+        metadata={"help": "Eval the model every x steps"},
     )
     
     
@@ -130,19 +123,19 @@ strong_student_model = AutoModelForSequenceClassification.from_pretrained(
     torch_dtype=torch.bfloat16,
 )
 
-# Set use_cache and pad_token_id based on gradient checkpointing and tokenizer
+# # Set use_cache and pad_token_id based on gradient checkpointing and tokenizer
 strong_student_model.config.use_cache = not script_args.gradient_checkpointing
 strong_student_model.config.pad_token_id = tokenizer.pad_token_id
 strong_student_model.resize_token_embeddings(len(tokenizer))
 
 
 # Prune layers based on student_layers
-for i in reversed(range(len(strong_student_model.model.layers))):
-    if i not in script_args.student_layers:
-        del strong_student_model.model.layers[i]
+# for i in reversed(range(len(strong_student_model.model.layers))):
+#     if i not in script_args.student_layers:
+#         del strong_student_model.model.layers[i]
 
-# Adjust the number of hidden layers to match the pruned model
-strong_student_model.config.num_hidden_layers = len(script_args.student_layers)
+# # Adjust the number of hidden layers to match the pruned model
+# strong_student_model.config.num_hidden_layers = len(script_args.student_layers)
 
 # Move model to the appropriate device (i.e., accelerator device)
 
@@ -158,8 +151,11 @@ distill_model = DistillationModel(student_model = strong_student_model, teacher_
 output_name = script_args.output_path
 
 # load the dataset/
-train_dataset = load_from_disk(script_args.train_data_path)
-eval_dataset = load_from_disk(script_args.eval_data_path)
+dataset = load_from_disk(script_args.train_data_path)
+split_dataset = dataset.train_test_split(test_size=1000)
+
+train_dataset = split_dataset["train"]
+eval_dataset = split_dataset["test"]
 print("Training set: ", len(train_dataset), " Eval set: ", len(eval_dataset))
 
 # Define the trainer
@@ -258,7 +254,6 @@ class DistillationTrainer(Trainer):
         return loss
 
 
-
 class EvaluationCallback(TrainerCallback):
     def __init__(self, trainer, eval_steps=50, save_dir="best_model"):
         self.trainer = trainer
@@ -276,10 +271,11 @@ class EvaluationCallback(TrainerCallback):
             # 如果当前 accuracy 是最高的，则保存模型
             if accuracy > self.best_accuracy:
                 self.best_accuracy = accuracy
-                print(f"✅ New best accuracy! Saving model to {self.save_dir}")
-                self.trainer.save_model(self.save_dir)
-
-
+                print(f"✅ New best accuracy! Saving student model to {self.save_dir}")
+                
+                # 保存学生模型（假设 student_model 是 distill_model 中的学生模型部分）
+                student_model = self.trainer.model.student_model  # 获取学生模型
+                student_model.save_pretrained(self.save_dir)  # 保存学生模型
 
 # Train the model, woohoo.
 trainer = DistillationTrainer(
@@ -290,9 +286,11 @@ trainer = DistillationTrainer(
     compute_metrics=compute_metrics,
     data_collator=RewardDataCollatorWithPadding(
         tokenizer=tokenizer, max_length=script_args.max_length
-    ),)
-trainer.add_callback(EvaluationCallback(trainer, eval_steps=script_args.save_every_steps, save_dir="best_model"))
+    ),
+)
 
+# 添加 EvaluationCallback
+trainer.add_callback(EvaluationCallback(trainer, eval_steps=script_args.save_every_steps, save_dir=output_name))
 
 
 

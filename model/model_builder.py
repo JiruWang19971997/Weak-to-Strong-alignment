@@ -45,7 +45,7 @@ class MoETransformerDistiller(PreTrainedModel):
         self.gating_network = nn.Linear(s_hidden_dim, len(self.teachers))  # 门控网络
         
     def forward(self, input_ids, attention_mask):
-        import pdb;pdb.set_trace()
+        
         with torch.no_grad():
             t_outputs = [teacher(input_ids, attention_mask=attention_mask, output_hidden_states=True) for teacher in self.teachers]
         
@@ -65,8 +65,13 @@ class MoETransformerDistiller(PreTrainedModel):
         return s_outputs.logits, loss_distill
     
     
+import torch
+import torch.nn as nn
+from transformers import AutoModelForSequenceClassification
+
 class DistillationModel(nn.Module):
     _keys_to_ignore_on_save = [] 
+
     def __init__(self, student_model, teacher_model, temperature=2.0, alpha=0.5):
         super(DistillationModel, self).__init__()
         self.student_model = student_model
@@ -74,15 +79,36 @@ class DistillationModel(nn.Module):
         self.temperature = temperature
         self.alpha = alpha
         
+        # Freeze all layers in the student model by default
+        self.freeze_student_layers()
+
+    def freeze_student_layers(self):
+        """
+        Freeze all layers except the last two layers of the student model.
+        """
+        for name, param in self.student_model.named_parameters():
+            # Freeze all layers except the last two
+            if 'model.layers' in name:
+                layer_number = int(name.split('.')[2])  # Extract the layer number
+                if layer_number < self.student_model.config.num_hidden_layers - 2:
+                    param.requires_grad = False  # Freeze all but the last two layers
+                else:
+                    param.requires_grad = True  # Enable training for the last two layers
+            else:
+                param.requires_grad = False  # Freeze all non-layer parameters
+
     def forward(self, inputs, attention, labels=None, return_loss=False):
         student_outputs = self.student_model(
             input_ids=inputs, attention_mask=attention
-        )  
+        )
+
+        # Teacher forward pass (no gradients)
         with torch.no_grad():
             teacher_outputs = self.teacher_model(
-                    input_ids=inputs, attention_mask=attention
-                )
+                input_ids=inputs, attention_mask=attention
+            )
 
         return student_outputs, teacher_outputs
+
     def gradient_checkpointing_enable(self, **kwargs):  
-        print("Warning: gradient_checkpointing_enable() is not implemented") 
+        print("Warning: gradient_checkpointing_enable() is not implemented")
