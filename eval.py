@@ -5,21 +5,44 @@ from datasets import load_from_disk
 from torch.utils.data import DataLoader
 from typing import Any, Dict, List, Optional, Union
 from transformers.utils import PaddingStrategy
+import argparse
+from dataclasses import dataclass
+from tqdm import tqdm
+from accelerate import Accelerator
 
-# Load weak teacher model
-model_path = "/root/autodl-tmp/weak_superviser_0.32B/last_checkpoint"
-weak_teacher_model = AutoModelForSequenceClassification.from_pretrained(
-    model_path,
-    num_labels=1,
-    torch_dtype=torch.bfloat16,
-)
-tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
+# 设置Accelerator
+accelerator = Accelerator()
 
-# Load dataset
-train_dataset = load_from_disk("/root/autodl-tmp/train_small")
-from dataclasses import dataclass, field
+# 解析命令行参数
+def parse_args():
+    parser = argparse.ArgumentParser(description="Training a model on a dataset")
+    parser.add_argument("--model_path", type=str, required=True, help="Path to the pre-trained model")
+    parser.add_argument("--tokenizer_path", type=str, required=True, help="Path to the tokenizer")
+    parser.add_argument("--data_path", type=str, required=True, help="Path to the dataset")
+    return parser.parse_args()
 
-# 创建数据加载器
+# 加载弱教师模型
+def load_model(model_path: str):
+    model = AutoModelForSequenceClassification.from_pretrained(
+        model_path,
+        num_labels=1,
+        torch_dtype=torch.bfloat16,
+    )
+    return model
+
+# 加载分词器
+def load_tokenizer(tokenizer_path: str):
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=False)
+    tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+    tokenizer.truncation_side = "left"
+    tokenizer.model_max_length = 2048
+    return tokenizer
+
+# 加载数据集
+def load_dataset(data_path: str):
+    return load_from_disk(data_path)
+
+# 数据预处理器
 @dataclass
 class RewardDataCollatorWithPadding:
     tokenizer: AutoTokenizer
@@ -30,7 +53,6 @@ class RewardDataCollatorWithPadding:
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
         merged_features = []
-
         for feature in features:
             merged_features.append(
                 {
@@ -57,45 +79,54 @@ class RewardDataCollatorWithPadding:
             "return_loss": True,
         }
         return batch
-    
-batch_size = 1  # 你可以调整批次大小
-collator = RewardDataCollatorWithPadding(tokenizer=tokenizer)
 
-train_dataloader = DataLoader(
-    train_dataset,
-    batch_size=batch_size,
-    shuffle=False,
-    collate_fn=collator  # 修正参数名称
-)
-
-# 评估模式
-weak_teacher_model.eval()
-
+# 计算指标函数
 def compute_metrics(eval_pred):
     result = {}
-    pos_predictions_scores = eval_pred.predictions[:, 0]  # 取出正样本得分
-    neg_predictions_scores = eval_pred.predictions[:, 1]  # 取出负样本得分
-    result["accuracy"] = np.mean(pos_predictions_scores > neg_predictions_scores)
-    return result
+    pos_predictions_scores = eval_pred[0][::2]  # 取出正样本得分
+    neg_predictions_scores = eval_pred[0][1::2]  # 取出负样本得分
+    acc = (pos_predictions_scores > neg_predictions_scores).float().mean()
+    return acc
 
-# 预测
-all_predictions = []
+# 主函数
+def main():
+    # 解析命令行参数
+    args = parse_args()
 
+    # 加载模型和数据
+    llama_model = load_model(args.model_path)
+    tokenizer = load_tokenizer(args.tokenizer_path)
+    train_dataset = load_dataset(args.data_path)
 
+    batch_size = 4  # 批次大小
+    collator = RewardDataCollatorWithPadding(tokenizer=tokenizer)
 
+    # 创建数据加载器
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        collate_fn=collator,
+    )
 
+    # 使用Accelerator进行设备管理
+    llama_model = accelerator.prepare(llama_model)  # 准备模型，自动分配到可用的设备
+    train_dataloader = accelerator.prepare(train_dataloader)  # 准备数据加载器
 
-with torch.no_grad():
-    for batch in train_dataloader:
-        inputs = {key: value for key, value in batch.items() if key in ["input_ids", "attention_mask"]}
-        outputs = weak_teacher_model(**inputs)
-        predictions = outputs.logits.cpu().to(torch.float32).numpy()
-        all_predictions.append(predictions)
+    # 评估模式
+    llama_model.eval()
 
-# 处理预测结果
-all_predictions = np.concatenate(all_predictions, axis=0)
+    acc = []
+    with torch.no_grad():
+        for batch in tqdm(train_dataloader, desc="Processing Batches"):  # 添加进度条
+            inputs = {key: value for key, value in batch.items() if key in ["input_ids", "attention_mask"]}
+            outputs = llama_model(**inputs)
+            acc.append(compute_metrics(outputs))
 
-# 计算评估指标
-metrics = compute_metrics(eval_pred={"predictions": all_predictions})
+    # 计算平均准确率
+    average_acc = torch.mean(torch.tensor(acc))  # 将 acc 转换为 tensor 计算均值
+    print("Average Accuracy:", average_acc.item())  # .item() 取出 Python 数值
 
-print("Evaluation Metrics:", metrics)
+# 运行主函数
+if __name__ == "__main__":
+    main()
