@@ -38,7 +38,7 @@ If the teacher model is too small, it is more likely to be overfitted on the tra
 
 
 
-## Main the pre-trained model's ability： Feature Alignment
+## Maintain the pre-trained model's ability： Feature Alignment
 ### Experiments: Are all hidden layers changed during the preference alignment task? 
 I conducted experiments on pre-trained llama3.2 and well-fine-tuned llama3.2 on Reward Model tasks, by plotting their TSNE on lower dimensions.
 <div style="display: flex; justify-content: space-between;">
@@ -50,7 +50,7 @@ I conducted experiments on pre-trained llama3.2 and well-fine-tuned llama3.2 on 
 From the figure, we can see that during the fine-tuning process on the reward model task, the deeper layers undergo more transformation compared to the shallow layers.
 
 
-#### ***Contribution 1: Retaining the full weak teacher architecture and only fine-tuning the deep layer:***
+#### ***Contribution 1: Retaining the supervisor containing full architecture and only fine-tuning the deep layer:***
 The experiments show that keeping the full architecture of the weak teacher model is crucial. In the weak-to-strong framework, even when the teacher model is not fully trained, it is still possible to achieve a significant improvement in the student model's performance by only updating the parameters of the deep layers in the student model with minimal computational cost. This approach allows for a recovery of higher student capabilities.   
 
 Llama3.2B   
@@ -64,6 +64,8 @@ Llama3.2B
 
 
 ## Decrease the bias in weak labels： MOE & contrastive learning
+![moe_self_corr drawio](https://github.com/user-attachments/assets/cf2f8bea-f221-4793-9a1b-876347fdc27b)
+
 ***Contribution 2: Self-Correction by contrastive learning***
 
 ***Contribution 3: multiple experts to determine the positive and negative sample for contrastive learning***
