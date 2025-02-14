@@ -50,11 +50,11 @@ class ScriptArguments:
         },
     )
     student_model_path: Optional[str] = field(
-        default="/root/Llama-3.2-1B-Instruct",
+        default="/root/autodl-tmp/Llama-3.2-1B-Instruct",
         metadata={"help": "prepossed model weight"},
     )
     teacher_model_path: Optional[str] = field(
-        default="/root/0.51B",
+        default="/root/autodl-tmp/0.51B",
         metadata={"help": "prepossed model weight"},
     )
 
@@ -88,7 +88,7 @@ class ScriptArguments:
     )
     optim: Optional[str] = field(
         # default="adamw_hf",
-        default="paged_adamw_32bit",
+        default="adamw_hf",
         # default="adamw_torch_fused",
         metadata={"help": "The optimizer to use."},
     )
@@ -99,13 +99,17 @@ class ScriptArguments:
     max_length: Optional[int] = field(default=4096)
 
     save_every_steps: Optional[int] = field(
-        default=50,
+        default=200,
         metadata={"help": "Save the model every x steps"},
     )
     eval_every_steps: Optional[int] = field(
-        default=999999,
-        metadata={"help": "Eval the model every x steps"},
+        default=200,
+        metadata={"help": "Eval the model every x steps"},)
+    student_train_layer: Optional[int] = field(
+        default=2,
+        metadata={"help": "trainable student model layer"},
     )
+    
     
     
 parser = HfArgumentParser(ScriptArguments)
@@ -146,9 +150,9 @@ weak_teacher_model = AutoModelForSequenceClassification.from_pretrained(
     num_labels=1,
     torch_dtype=torch.bfloat16,
 )
-distill_model = DistillationModel(student_model = strong_student_model, teacher_model = weak_teacher_model)
-
-output_name = script_args.output_path
+distill_model = DistillationModel(student_model = strong_student_model, teacher_model = weak_teacher_model, student_train_layer = script_args.student_train_layer)
+model = accelerator.prepare(distill_model)
+output_name = script_args.output_path + "_" + str(script_args.student_train_layer)
 
 # load the dataset/
 dataset = load_from_disk(script_args.train_data_path)
@@ -290,7 +294,7 @@ trainer = DistillationTrainer(
 )
 
 # 添加 EvaluationCallback
-trainer.add_callback(EvaluationCallback(trainer, eval_steps=script_args.save_every_steps, save_dir=output_name))
+trainer.add_callback(EvaluationCallback(trainer, eval_steps=script_args.eval_every_steps, save_dir=output_name))
 
 
 
